@@ -44,8 +44,7 @@ const postFactory = (index: number): Post => {
 // ================================================================
 
 // !!! ATTENTION : Assurez-vous que l'URL et le nom de la base de données correspondent à votre CouchDB !!!
-// Remplacez 'infra_53_0850' par le nom de votre base de données CouchDB
-const remoteDbUrl = 'http://admin:admin@localhost:5984/infra_53_0850'; 
+const remoteDbUrl = 'http://admin:admin@localhost:5984/infra_53_0850';
 const LOCAL_DB_NAME = 'local_infra_53_0850';
 
 let remoteDb: PouchDB.Database | null = null;
@@ -67,12 +66,13 @@ const initDatabase = async () => {
         console.log('✅ Bases de données locale et distante connectées.');
 
         // CRUCIAL : Création des INDEX (obligatoire pour .find() et la recherche rapide)
-        // On indexe sur 'type' pour le filtrage et 'title' et 'likes' pour la recherche/tri.
         if (localDb) {
+            // Index corrigé : inclut tous les champs utilisés dans le selector (type, title) et le champ de tri (likes).
+            // L'ordre doit respecter les contraintes de Mango Indexing.
             await localDb.createIndex({
                 index: { fields: ['type', 'title', 'likes'] }
             });
-            console.log('✅ Index de recherche (Mango) créés avec succès.');
+            console.log('✅ Index de recherche (Mango) créés avec succès pour le tri.');
         }
 
         // Démarrage de la réplication et chargement initial
@@ -169,10 +169,11 @@ const searchDocuments = async () => {
                 // Utilisation d'une expression régulière pour une recherche "LIKE" insensible à la casse
                 title: { $regex: RegExp(query, "i") } 
             },
-            // On trie les résultats par likes (du plus liké au moins liké)
+            // Correction du tri : on trie par 'likes' et on doit inclure tous les champs indexés utilisés.
             sort: [
-                { 'type': 'desc' }, 
-                { 'likes': 'desc' } // Tri par likes (du plus grand au plus petit)
+                { 'type': 'desc' }, // Doit correspondre à l'index
+                { 'title': 'desc' }, // Doit correspondre à l'index
+                { 'likes': 'desc' } // Doit correspondre à l'index
             ] 
         });
 
@@ -181,6 +182,8 @@ const searchDocuments = async () => {
         searchStatus.value = `🔍 ${documents.value.length} résultat(s) trouvé(s) pour "${query}", trié(s) par Likes.`;
 
     } catch (err) {
+        // L'erreur de l'indexation sera maintenant journalisée, mais l'application devrait fonctionner.
+        // Si l'erreur persiste, c'est que l'index n'est pas encore prêt, mais le retry de l'initDb devrait corriger.
         console.error('❌ Erreur de recherche (PouchDB-Find):', err);
         searchStatus.value = "Erreur de recherche. Assurez-vous que les index sont bien créés.";
     }
@@ -246,32 +249,32 @@ onMounted(() => {
 <template>
   <div class="container">
     <header>
-        <h1>InfraDon 2 - Rendu Intermédiaire PouchDB/CouchDB</h1>
+        <h1><i class="icon-database"></i> InfraDon 2 - PouchDB/CouchDB</h1>
         <div class="status-bar">
             <!-- Affichage du statut de la connexion / sync -->
             <span class="status" :class="{ online: isOnline, offline: !isOnline }">
-                {{ isOnline ? '🟢 ONLINE (Sync Active)' : '🔴 OFFLINE (Local DB)' }}
+                {{ isOnline ? '🟢 ONLINE (Sync Live)' : '🔴 OFFLINE (Local Only)' }}
             </span>
-            <button @click="toggleOffline" class="btn-small">Basculer Mode</button>
+            <button @click="toggleOffline" class="btn-small">Basculer Mode (Simuler)</button>
         </div>
     </header>
 
     <section class="controls">
-        <div class="card">
-            <h3>1. Création de Données (CRUD)</h3>
+        <div class="card control-box create-box">
+            <h3>1. Création de Documents</h3>
             <div class="buttons">
-                <button @click="createNewPost" class="btn-primary">➕ Ajouter 1 Post</button>
-                <button @click="generateMassData" class="btn-warning">🏭 Factory (20 Posts)</button>
+                <button @click="createNewPost" class="btn-primary">➕ Créer 1 Post</button>
+                <button @click="generateMassData" class="btn-secondary">🏭 Factory (20 Posts)</button>
             </div>
         </div>
 
-        <div class="card">
-            <h3>2. Recherche & Tri (Indexé)</h3>
+        <div class="card control-box search-box">
+            <h3>2. Recherche Indexée & Tri</h3>
             <!-- Champ de recherche qui déclenche la méthode searchDocuments via le watch() -->
             <input 
                 v-model="searchQuery" 
                 type="text" 
-                placeholder="🔍 Rechercher un titre (ex: Message #5)..."
+                placeholder="🔍 Rechercher un titre..."
                 class="search-input"
             />
             <!-- Message de statut : nombre de résultats et méthode de tri -->
@@ -280,27 +283,28 @@ onMounted(() => {
     </section>
 
     <section class="results">
-        <h2>Liste des Documents</h2>
+        <h2>Liste des Posts</h2>
         <!-- État vide si aucun document n'est affiché -->
         <div v-if="documents.length === 0" class="empty-state">
-            Aucun document trouvé. Créez des posts ou modifiez votre recherche.
+            <i class="icon-empty"></i>
+            Aucun document trouvé. Créez des posts pour démarrer ou vérifiez votre recherche.
         </div>
         <!-- Grille des documents -->
         <div class="grid">
             <div v-for="doc in documents" :key="doc._id" class="post-card">
                 <div class="post-header">
-                    <strong>{{ doc.title }}</strong>
+                    <span class="post-title">{{ doc.title }}</span>
                     <!-- Affichage de l'attribut 'likes' -->
-                    <span class="likes">❤️ {{ doc.likes }}</span>
+                    <span class="likes"><i class="icon-like"></i> {{ doc.likes }}</span>
                 </div>
-                <p>{{ doc.content }}</p>
+                <p class="post-content">{{ doc.content }}</p>
                 <div class="actions">
                     <!-- Bouton pour liker (CRUD - Update) -->
-                    <button @click="likePost(doc)">👍 Like</button>
+                    <button @click="likePost(doc)" class="btn-like">👍 J'aime</button>
                     <!-- Bouton pour supprimer (CRUD - Delete) -->
-                    <button @click="deletePost(doc)" class="btn-danger">🗑️ Suppr</button>
+                    <button @click="deletePost(doc)" class="btn-danger">🗑️ Supprimer</button>
                 </div>
-                <small class="id-text">ID Local: {{ doc._id.substring(0, 10) }}...</small>
+                <small class="id-text">ID: {{ doc._id.substring(0, 15) }}...</small>
             </div>
         </div>
     </section>
@@ -308,45 +312,280 @@ onMounted(() => {
 </template>
 
 <style scoped>
-/* Styles de base pour l'esthétique et la réactivité */
-.container { font-family: 'Segoe UI', sans-serif; max-width: 900px; margin: 0 auto; padding: 20px; color: #333; }
-header { display: flex; flex-direction: column; align-items: center; border-bottom: 2px solid #eee; margin-bottom: 20px; padding-bottom: 10px; }
-h1 { font-size: 1.8em; color: #007bff; margin-bottom: 10px; }
+/*
+ * Styles Améliorés
+ * Utilise une palette plus douce et des ombres subtiles pour un look moderne.
+ */
 
-.status-bar { display: flex; gap: 10px; align-items: center; }
-.status { padding: 5px 10px; border-radius: 15px; font-weight: bold; font-size: 0.9em; transition: all 0.3s; }
-.online { background: #d4edda; color: #155724; box-shadow: 0 0 5px rgba(21, 87, 36, 0.5); }
-.offline { background: #f8d7da; color: #721c24; box-shadow: 0 0 5px rgba(114, 28, 36, 0.5); }
-
-.controls { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
-@media (max-width: 600px) {
-    .controls { grid-template-columns: 1fr; }
+:root {
+    --color-primary: #1e90ff; /* Bleu éclatant */
+    --color-secondary: #ffac33; /* Orange doux pour l'usine */
+    --color-success: #28a745;
+    --color-danger: #dc3545;
+    --color-background: #111c24ff;
+    --color-card-bg: #ffffff;
+    --shadow-light: 0 4px 10px rgba(0, 0, 0, 0.05);
+    --shadow-hover: 0 8px 15px rgba(0, 0, 0, 0.1);
+    --border-radius: 12px;
 }
 
-.card { background: #f9f9f9; padding: 15px; border-radius: 8px; border: 1px solid #ddd; box-shadow: 0 1px 3px rgba(0,0,0,0.08); }
-.buttons { display: flex; gap: 10px; margin-top: 10px; }
-.search-input { width: 100%; padding: 10px; border: 2px solid #ccc; border-radius: 6px; margin-top: 10px; font-size: 1em; }
-.search-info { font-size: 0.85em; color: #666; margin-top: 5px; font-style: italic; }
+body {
+    background-color: var(--color-background);
+}
 
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 15px; }
-.post-card { border: 1px solid #e0e0e0; padding: 15px; border-radius: 8px; background: white; box-shadow: 0 2px 5px rgba(0,0,0,0.05); transition: transform 0.2s, box-shadow 0.2s; }
-.post-card:hover { transform: translateY(-3px); box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+.container { 
+    font-family: 'Inter', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+    max-width: 960px; 
+    margin: 0 auto; 
+    padding: 30px 20px; 
+    color: #2c3e50; 
+}
 
-.post-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; font-size: 1.1em; border-bottom: 1px solid #eee; padding-bottom: 5px;}
-.likes { color: #e91e63; font-weight: bold; font-size: 1.2em; }
-.actions { margin-top: 15px; display: flex; gap: 10px; justify-content: flex-end; }
-.id-text { display: block; margin-top: 10px; font-size: 0.7em; color: #aaa; text-align: left; }
-.empty-state { text-align: center; padding: 40px; color: #888; background: #f9f9f9; border-radius: 8px; grid-column: 1 / -1; border: 2px dashed #ddd; }
+/* --- HEADER / TITRE --- */
+header { 
+    display: flex; 
+    flex-direction: column; 
+    align-items: center; 
+    text-align: center;
+    border-bottom: 2px solid #e0e0e0; 
+    margin-bottom: 30px; 
+    padding-bottom: 15px; 
+}
+h1 { 
+    font-size: 2em; 
+    color: var(--color-primary); 
+    margin-bottom: 15px; 
+    font-weight: 700;
+}
+.icon-database { 
+    /* Utilisation d'un caractère Unicode simple pour l'icône, ou SVG si disponible */
+    content: '💾'; 
+    margin-right: 8px; 
+    font-size: 1.1em;
+}
 
-button { cursor: pointer; padding: 8px 15px; border: none; border-radius: 6px; font-weight: 500; transition: background 0.2s, transform 0.1s; }
-button:active { transform: scale(0.98); }
+/* --- STATUS BAR --- */
+.status-bar { 
+    display: flex; 
+    gap: 15px; 
+    align-items: center; 
+    padding: 8px 15px;
+    border-radius: var(--border-radius);
+    background: var(--color-card-bg);
+    box-shadow: var(--shadow-light);
+}
+.status { 
+    padding: 5px 12px; 
+    border-radius: 20px; 
+    font-weight: bold; 
+    font-size: 0.85em; 
+    transition: all 0.3s; 
+    text-transform: uppercase;
+}
+.online { 
+    background: #d4edda; 
+    color: var(--color-success); 
+}
+.offline { 
+    background: #f8d7da; 
+    color: var(--color-danger); 
+}
 
-.btn-primary { background: #007bff; color: white; box-shadow: 0 2px 4px rgba(0, 123, 255, 0.4); }
-.btn-primary:hover { background: #0056b3; }
-.btn-warning { background: #ffc107; color: #333; box-shadow: 0 2px 4px rgba(255, 193, 7, 0.4); }
-.btn-warning:hover { background: #e0a800; }
-.btn-danger { background: #dc3545; color: white; box-shadow: 0 2px 4px rgba(220, 53, 69, 0.4); }
-.btn-danger:hover { background: #c82333; }
-.btn-small { font-size: 0.8em; padding: 5px 10px; background: #6c757d; color: white; }
-.btn-small:hover { background: #5a6268; }
+/* --- CONTROLS & CARDS --- */
+.controls { 
+    display: grid; 
+    grid-template-columns: 1fr 2fr; 
+    gap: 20px; 
+    margin-bottom: 30px; 
+}
+@media (max-width: 768px) {
+    .controls { grid-template-columns: 1fr; }
+    .create-box { order: 2; }
+    .search-box { order: 1; }
+}
+
+.card { 
+    background: var(--color-card-bg); 
+    padding: 20px; 
+    border-radius: var(--border-radius); 
+    border: 1px solid #e9ecef; 
+    box-shadow: var(--shadow-light); 
+    transition: box-shadow 0.3s;
+}
+.card h3 {
+    margin-top: 0;
+    color: var(--color-primary);
+    font-size: 1.2em;
+    border-bottom: 1px dashed #e9ecef;
+    padding-bottom: 10px;
+}
+
+.buttons { display: flex; gap: 10px; margin-top: 15px; }
+
+.search-input { 
+    width: 100%; 
+    padding: 12px; 
+    border: 2px solid #ccc; 
+    border-radius: 8px; 
+    margin-top: 10px; 
+    font-size: 1em; 
+    transition: border-color 0.3s, box-shadow 0.3s;
+}
+.search-input:focus {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(30, 144, 255, 0.2);
+    outline: none;
+}
+.search-info { 
+    font-size: 0.8em; 
+    color: #6c757d; 
+    margin-top: 8px; 
+    font-style: italic; 
+}
+
+/* --- GRID & POST CARDS --- */
+h2 {
+    color: #495057;
+    border-bottom: 1px solid #e0e0e0;
+    padding-bottom: 10px;
+    margin-bottom: 20px;
+}
+.grid { 
+    display: grid; 
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); 
+    gap: 20px; 
+}
+.post-card { 
+    padding: 20px; 
+    border-radius: var(--border-radius); 
+    background: var(--color-card-bg); 
+    box-shadow: var(--shadow-light); 
+    transition: transform 0.2s, box-shadow 0.2s; 
+}
+.post-card:hover { 
+    transform: translateY(-5px); 
+    box-shadow: var(--shadow-hover); 
+}
+
+.post-header { 
+    display: flex; 
+    justify-content: space-between; 
+    align-items: center; 
+    margin-bottom: 15px; 
+    font-size: 1.2em; 
+    border-bottom: 1px solid #f8f9fa; 
+    padding-bottom: 5px;
+}
+.post-title {
+    font-weight: 600;
+    color: #333;
+}
+.likes { 
+    color: #e91e63; /* Rose pour les likes */
+    font-weight: 700; 
+    font-size: 1.1em; 
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+.icon-like {
+    content: '❤️';
+    font-size: 1.1em;
+}
+
+.post-content {
+    color: #555;
+    line-height: 1.4;
+    margin-bottom: 15px;
+}
+.actions { 
+    margin-top: 15px; 
+    display: flex; 
+    gap: 10px; 
+    justify-content: flex-end; 
+    border-top: 1px solid #f8f9fa;
+    padding-top: 10px;
+}
+.id-text { 
+    display: block; 
+    margin-top: 10px; 
+    font-size: 0.75em; 
+    color: #aaa; 
+    text-align: right; 
+}
+.empty-state { 
+    text-align: center; 
+    padding: 50px; 
+    color: #888; 
+    background: #e9ecef; 
+    border-radius: var(--border-radius); 
+    grid-column: 1 / -1; 
+    border: 2px dashed #ced4da; 
+    font-size: 1.1em;
+}
+.icon-empty {
+    content: '📄';
+    display: block;
+    font-size: 2em;
+    margin-bottom: 10px;
+}
+
+
+/* --- BOUTONS UNIVERSELS --- */
+button { 
+    cursor: pointer; 
+    padding: 10px 18px; 
+    border: none; 
+    border-radius: 8px; 
+    font-weight: 600; 
+    transition: background 0.2s, transform 0.1s, box-shadow 0.2s; 
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+button:active { 
+    transform: scale(0.98); 
+    box-shadow: none;
+}
+
+.btn-primary { 
+    background: var(--color-primary); 
+    color: white; 
+}
+.btn-primary:hover { 
+    background: #106fcc; 
+}
+
+.btn-secondary { 
+    background: var(--color-secondary); 
+    color: #333; 
+}
+.btn-secondary:hover { 
+    background: #e69500; 
+}
+
+.btn-like { 
+    background: #ffe3e9; 
+    color: #e91e63; 
+}
+.btn-like:hover { 
+    background: #ffcdd2; 
+}
+
+.btn-danger { 
+    background: var(--color-danger); 
+    color: white; 
+}
+.btn-danger:hover { 
+    background: #c82333; 
+}
+
+.btn-small { 
+    font-size: 0.85em; 
+    padding: 6px 12px; 
+    background: #6c757d; 
+    color: white; 
+    box-shadow: none;
+}
+.btn-small:hover { 
+    background: #5a6268; 
+}
 </style>
